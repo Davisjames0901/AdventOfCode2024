@@ -1,4 +1,5 @@
 zig-out
 .vscode
 .idea
+.zig-cache
 **/**/*.input
