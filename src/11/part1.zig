@@ -1,5 +1,5 @@
 const std = @import("std");
-const data = @embedFile("input");
+const data = @embedFile("test.input");
 
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -13,7 +13,7 @@ pub fn main() !void {
         try stones.append(num);
     }
 
-    for(0..25) |i| {
+    for(0..7) |i| {
         std.debug.print("Blink: {}\n", .{i});
         const nextStones = try applyRules(&stones);
         stones.deinit();
