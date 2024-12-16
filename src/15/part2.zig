@@ -1,5 +1,5 @@
 const std = @import("std");
-const data = @embedFile("test.input");
+const data = @embedFile("puzzle.input");
 
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -73,19 +73,7 @@ fn tryMove(pos: *const Vec2, direction: *const Direction, map: *std.AutoArrayHas
     return switch (cell) {
         BlockType.Wall => false,
         BlockType.Air => true,
-        BlockType.BoxLeft => {
-            if(direction.* == Direction.Left or direction.* == Direction.Right) {
-                const next = pos.move(direction);
-                if (try tryMove(&next, direction, map)) {
-                    try map.put(pos.*, BlockType.Air);
-                    try map.put(next, cell);
-                    return true;
-                }
-                return false;
-            }
-            try tryMoveBoxUpDown(pos, &pos.move(&Direction.Right), direction, map);
-        },
-        BlockType.BoxRight => {
+        BlockType.BoxLeft, BlockType.BoxRight => {
             const next = pos.move(direction);
             if(direction.* == Direction.Left or direction.* == Direction.Right) {
                 if (try tryMove(&next, direction, map)) {
@@ -95,51 +83,70 @@ fn tryMove(pos: *const Vec2, direction: *const Direction, map: *std.AutoArrayHas
                 }
                 return false;
             }
-            const left = pos.move(&Direction.Left);
-            const nextLeft = left.move(direction);
-            if(try tryMoveBoxUpDown(&nextLeft, &next, direction, map)) {
+            var compliment: Vec2 = undefined;
+            var complimentType: BlockType = undefined;
+            var nextCompliment: Vec2 = undefined;
+            if(cell == BlockType.BoxLeft) {
+                compliment = pos.move(&Direction.Right);
+                complimentType = BlockType.BoxRight;
+            } else {
+                compliment = pos.move(&Direction.Left);
+                complimentType = BlockType.BoxLeft;
+            }
+            nextCompliment = compliment.move(direction);
+
+            var nextPositions = std.AutoArrayHashMap(Vec2, void).init(map.allocator);
+            defer nextPositions.deinit();
+
+            try nextPositions.put(pos.*, {});
+            try nextPositions.put(compliment, {});
+
+            if(try tryMoveMany(&nextPositions, direction, map)) {
                 try map.put(pos.*, BlockType.Air);
-                try map.put(left.*, BlockType.Air);
+                try map.put(compliment, BlockType.Air);
                 try map.put(next, cell);
-                try map.put(nextLeft, BlockType.BoxLeft);
+                try map.put(nextCompliment, complimentType);
+
                 return true;
             }
             return false;
-        },
+        }
     };
 }
 
-fn tryMoveDouble(pos: *const Vec2, compliment: *const Vec2, direction: *const Direction, map: *std.AutoArrayHashMap(Vec2, BlockType)) !bool {
-    const cell = map.get(pos.*);
-    const complimentCell = map.get(compliment.*);
-    if(cell == BlockType.Wall or complimentCell == BlockType.Wall)
-        return false;
-    if(cell == BlockType.Air and complimentCell == BlockType.Air)
+fn tryMoveMany(positions: *const std.AutoArrayHashMap(Vec2, void), direction: *const Direction, map: *std.AutoArrayHashMap(Vec2, BlockType)) !bool {
+    if(positions.count() == 0)
         return true;
-    if(cell == BlockType.Air and (complimentCell == BlockType.BoxLeft or complimentCell == BlockType.BoxRight))
-        return try tryMove(compliment, direction, map);
-    if(complimentCell == BlockType.Air and (cell == BlockType.BoxLeft or cell == BlockType.BoxRight))
-        return try tryMove(pos, direction, map);
-}
 
-fn tryMoveBoxUpDown(left: *const Vec2, right: *const Vec2, direction: *const Direction, map: *std.AutoArrayHashMap(Vec2, BlockType)) !bool {
-    const leftCell = map.get(left.*).?;
-    const rightCell = map.get(right.*).?;
+    var nextPositions = std.AutoArrayHashMap(Vec2, void).init(positions.allocator);
+    defer nextPositions.deinit();
 
-    const nextLeft = leftCell.move(direction);
-    const nextRight = rightCell.move(direction);
-    
-
-
-    if(try tryMoveDouble(pos, compliment, direction, map)) {
-        try map.put(pos.*, BlockType.Air);
-        try map.put(compliment.*, BlockType.Air);
-        try map.put(nextPos, cell);
-        try map.put(nextCompliment, complimentCell);
-        return true;
+    for(positions.keys()) |pos| {
+        const next = pos.move(direction);
+        const cell = map.get(next).?;
+        if(cell == BlockType.Wall)
+            return false;
+        if(cell == BlockType.BoxLeft){
+            try nextPositions.put(next, {});
+            try nextPositions.put(next.move(&Direction.Right), {});
+        } else if(cell == BlockType.BoxRight){
+            try nextPositions.put(next, {});
+            try nextPositions.put(next.move(&Direction.Left), {});
+        }
     }
-    return false;
+
+    if(!try tryMoveMany(&nextPositions, direction, map))
+        return false;
+
+    for(positions.keys()) |pos| {
+        const next = pos.move(direction);
+        const cell = map.get(pos).?;
+        try map.put(pos, BlockType.Air);
+        try map.put(next, cell);
+    }
+    return true;
 }
+
 
 const Vec2 = struct {
     x: i32,
