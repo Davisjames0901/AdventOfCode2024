@@ -33,8 +33,11 @@ fn getLowestCost(a: Vec2, b: Vec2, prize: Vec2) i32 {
             }
             presses += 1;
             if(claw.eq(&prize)) {
-                if(bestCost == null or cost < bestCost.?)
+                if(bestCost != null)
+                    std.debug.print("More solutions?\n", .{});
+                if(bestCost == null or cost < bestCost.?) {
                     bestCost = cost;
+                }
             } else if(prize.lt(&claw)) {
                 break;
             }

@@ -15,7 +15,7 @@ pub fn main() !void {
         const a = try Vec2.init(lines.next().?, lines.next().?);
         const b = try Vec2.init(lines.next().?, lines.next().?);
         var prize = try Vec2.init(lines.next().?, lines.next().?);
-        prize.x += 10000000000000;
+        prize.x += 10_000_000_000_000;
         prize.y += 10000000000000;
         total += getLowestCost(a, b, prize);
     }
