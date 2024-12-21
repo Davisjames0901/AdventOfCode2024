@@ -6,204 +6,192 @@ pub fn main() !void {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var map = std.AutoArrayHashMap(Vec2, BlockType).init(allocator);
-    var instructions = std.ArrayList(Direction).init(allocator);
-    var robot: Vec2 = undefined;
+    var unvisited = std.AutoArrayHashMap(Vertex, Edge).init(allocator);
+    var visited = std.AutoArrayHashMap(Vertex, Edge).init(allocator);
+    var map = std.AutoHashMap(Vec2, void).init(allocator);
+    var end: Vec2 = undefined;
 
-    var filePos = Vec2.init(0, 0);
+    var y: usize = 0;
+    var x: i32 = 0;
     for (data) |char| {
+        const pos = Vec2.init(x, y);
         switch (char) {
-            '@' => {
-                robot = filePos;
-                try map.put(filePos, BlockType.Air);
-                filePos.x += 1;
-                try map.put(filePos, BlockType.Air);
+            '.' => try map.put(pos, {}),
+            'S' => try unvisited.put(.{ .pos = pos, .vel = Vec2.init(1, 0) }, .{ .cost = 0, .previous = std.ArrayList(Vertex).init(allocator) }),
+            'E' => {
+                end = pos;
+                try map.put(pos, {});
             },
-            '#' => {
-                try map.put(filePos, BlockType.Wall);
-                filePos.x += 1;
-                try map.put(filePos, BlockType.Wall);
-            },
-            'O' => {
-                try map.put(filePos, BlockType.BoxLeft);
-                filePos.x += 1;
-                try map.put(filePos, BlockType.BoxRight);
-
-            },
-            '.' => {
-                try map.put(filePos, BlockType.Air);
-                filePos.x += 1;
-                try map.put(filePos, BlockType.Air);
-            },
-            '^' => try instructions.append(Direction.Up),
-            'v' => try instructions.append(Direction.Down),
-            '<' => try instructions.append(Direction.Left),
-            '>' => try instructions.append(Direction.Right),
             '\n' => {
-                filePos.y += 1;
-                filePos.x = -1;
+                y += 1;
+                x = -1;
             },
-            else => std.debug.print("Wtf is this??? {c}", .{char}),
+            else => {},
         }
-        filePos.x += 1;
-    }
-    drawMap(&map, robot);
-
-    for (instructions.items) |instruction| {
-        const nextRobot = robot.move(&instruction);
-        // drawMap(&map, robot);
-        // std.debug.print("Go {}\n", .{instruction});
-        if (try tryMove(&nextRobot, &instruction, &map))
-            robot = nextRobot;
+        x += 1;
     }
 
-    var total: i32 = 0;
-    for (map.keys()) |pos| {
-        const blockType = map.get(pos).?;
-        if (blockType == BlockType.BoxLeft) {
-            total += pos.getCoordinate();
+    var paths = std.AutoHashMap(Vec2, void).init(allocator);
+    var endVertex: ?Vertex = null;
+    while (getCheapestVertex(&unvisited)) |key| {
+        const edge = unvisited.get(key).?;
+        if (key.pos.eq(&end)) {
+            if (endVertex == null)
+                endVertex = key;
         }
+
+        const nextForward = key.pos.add(&key.vel);
+        if (map.contains(nextForward))
+            try estimate(&unvisited, &visited, key, .{ .pos = nextForward, .vel = key.vel }, edge.cost + 1);
+
+        const clockwise = key.vel.rotateClockwise90();
+        const nextClockwise = key.pos.add(&clockwise);
+        if (map.contains(nextClockwise))
+            try estimate(&unvisited, &visited, key, .{ .pos = nextClockwise, .vel = clockwise }, edge.cost + 1001);
+
+        const antiClockwise = key.vel.rotateAntiClockwise90();
+        const nextAntiClockwise = key.pos.add(&antiClockwise);
+        if (map.contains(nextAntiClockwise))
+            try estimate(&unvisited, &visited, key, .{ .pos = nextAntiClockwise, .vel = antiClockwise }, edge.cost + 1001);
+
+        try visited.put(key, edge);
+        _ = unvisited.swapRemove(key);
     }
 
-    std.debug.print("Answer: {}", .{total});
+    try updatePaths(&visited, &paths, endVertex.?);
+
+    drawMap(&paths);
+    std.debug.print("Answer: {?}\n", .{paths.count()});
 }
 
-fn tryMove(pos: *const Vec2, direction: *const Direction, map: *std.AutoArrayHashMap(Vec2, BlockType)) !bool {
-    const cell = map.get(pos.*).?;
-    return switch (cell) {
-        BlockType.Wall => false,
-        BlockType.Air => true,
-        BlockType.BoxLeft, BlockType.BoxRight => {
-            const next = pos.move(direction);
-            if(direction.* == Direction.Left or direction.* == Direction.Right) {
-                if (try tryMove(&next, direction, map)) {
-                    try map.put(pos.*, BlockType.Air);
-                    try map.put(next, cell);
-                    return true;
-                }
-                return false;
-            }
-            var compliment: Vec2 = undefined;
-            var complimentType: BlockType = undefined;
-            var nextCompliment: Vec2 = undefined;
-            if(cell == BlockType.BoxLeft) {
-                compliment = pos.move(&Direction.Right);
-                complimentType = BlockType.BoxRight;
-            } else {
-                compliment = pos.move(&Direction.Left);
-                complimentType = BlockType.BoxLeft;
-            }
-            nextCompliment = compliment.move(direction);
+fn estimate(unvisited: *std.AutoArrayHashMap(Vertex, Edge), visited: *std.AutoArrayHashMap(Vertex, Edge), from: Vertex, next: Vertex, cost: usize) !void {
+    if(visited.contains(next))
+        return;
 
-            var nextPositions = std.AutoArrayHashMap(Vec2, void).init(map.allocator);
-            defer nextPositions.deinit();
-
-            try nextPositions.put(pos.*, {});
-            try nextPositions.put(compliment, {});
-
-            if(try tryMoveMany(&nextPositions, direction, map)) {
-                try map.put(pos.*, BlockType.Air);
-                try map.put(compliment, BlockType.Air);
-                try map.put(next, cell);
-                try map.put(nextCompliment, complimentType);
-
-                return true;
-            }
-            return false;
-        }
-    };
+    var estimated = unvisited.get(next);
+    if (estimated == null or estimated.?.cost > cost) {
+        if(estimated != null)
+            std.debug.print("Replace! {any}\n", .{next});
+        try unvisited.put(next, try Edge.init(cost, from, unvisited.allocator));
+    } else if (estimated.?.cost == cost) {
+        try estimated.?.previous.append(from);
+        try unvisited.put(next, estimated.?);
+        std.debug.print("{any}: Count: {any}\n", .{ next, estimated.?.previous.items.len });
+        std.debug.print("\t{any}\n", .{estimated.?.previous.items});
+    }
 }
 
-fn tryMoveMany(positions: *const std.AutoArrayHashMap(Vec2, void), direction: *const Direction, map: *std.AutoArrayHashMap(Vec2, BlockType)) !bool {
-    if(positions.count() == 0)
-        return true;
-
-    var nextPositions = std.AutoArrayHashMap(Vec2, void).init(positions.allocator);
-    defer nextPositions.deinit();
-
-    for(positions.keys()) |pos| {
-        const next = pos.move(direction);
-        const cell = map.get(next).?;
-        if(cell == BlockType.Wall)
-            return false;
-        if(cell == BlockType.BoxLeft){
-            try nextPositions.put(next, {});
-            try nextPositions.put(next.move(&Direction.Right), {});
-        } else if(cell == BlockType.BoxRight){
-            try nextPositions.put(next, {});
-            try nextPositions.put(next.move(&Direction.Left), {});
+fn getCheapestVertex(unvisited: *std.AutoArrayHashMap(Vertex, Edge)) ?Vertex {
+    var min: ?Edge = null;
+    var minKey: ?Vertex = null;
+    for (unvisited.keys()) |key| {
+        const edge = unvisited.get(key).?;
+        if (min == null or min.?.cost > edge.cost) {
+            min = edge;
+            minKey = key;
         }
     }
-
-    if(!try tryMoveMany(&nextPositions, direction, map))
-        return false;
-
-    for(positions.keys()) |pos| {
-        const next = pos.move(direction);
-        const cell = map.get(pos).?;
-        try map.put(pos, BlockType.Air);
-        try map.put(next, cell);
-    }
-    return true;
+    return minKey;
 }
-
 
 const Vec2 = struct {
     x: i32,
     y: i32,
 
-    pub fn move(self: *const Vec2, direction: *const Direction) Vec2 {
-        return switch (direction.*) {
-            Direction.Up => .{ .x = self.x, .y = self.y - 1 },
-            Direction.Down => .{ .x = self.x, .y = self.y + 1 },
-            Direction.Left => .{ .x = self.x - 1, .y = self.y },
-            Direction.Right => .{ .x = self.x + 1, .y = self.y },
-        };
-    }
-
-    pub fn getCoordinate(self: *const Vec2) i32 {
-        return (self.y * 100) + self.x;
+    pub fn add(self: *const Vec2, right: *const Vec2) Vec2 {
+        return .{ .x = self.x + right.x, .y = self.y + right.y };
     }
 
     pub fn eq(self: *const Vec2, right: *const Vec2) bool {
         return self.x == right.x and self.y == right.y;
     }
 
+    pub fn rotateClockwise90(self: *const Vec2) Vec2 {
+        return Vec2.init(self.y * -1, self.x);
+    }
+
+    pub fn rotateAntiClockwise90(self: *const Vec2) Vec2 {
+        return Vec2.init(self.y, self.x * -1);
+    }
+
     pub fn init(x: anytype, y: anytype) Vec2 {
         return .{ .x = @intCast(x), .y = @intCast(y) };
     }
-};
-
-const BlockType = enum { BoxLeft, BoxRight, Wall, Air };
-const Direction = enum { Up, Down, Left, Right };
-
-fn drawMap(map: *const std.AutoArrayHashMap(Vec2, BlockType), robot: Vec2) void {
-    var vec: Vec2 = .{ .x = 0, .y = 0 };
-    var notFound = false;
-    while (true) {
-        if (map.get(vec)) |block| {
-            notFound = false;
-            switch (block) {
-                BlockType.Wall => std.debug.print("#", .{}),
-                BlockType.Air => {
-                    if (vec.eq(&robot)) {
-                        std.debug.print("@", .{});
-                    } else {
-                        std.debug.print(".", .{});
-                    }
-                },
-                BlockType.BoxLeft => std.debug.print("[", .{}),
-                BlockType.BoxRight => std.debug.print("]", .{}),
+    pub fn getChar(self: *const Vec2) u8 {
+        if (self.x == 0) {
+            if (self.y == -1) {
+                return '^';
+            } else {
+                return 'v';
             }
-            vec.x += 1;
-        } else if (notFound) {
-            std.debug.print("\n", .{});
-            break;
         } else {
-            std.debug.print("\n", .{});
-            vec.x = 0;
-            vec.y += 1;
-            notFound = true;
+            if (self.x == -1) {
+                return '<';
+            } else {
+                return '>';
+            }
         }
     }
+};
+
+const Edge = struct {
+    cost: usize,
+    previous: std.ArrayList(Vertex),
+    fn init(cost: usize, prev: Vertex, alloc: std.mem.Allocator) !Edge {
+        var arr = std.ArrayList(Vertex).init(alloc);
+        try arr.append(prev);
+
+        return .{ .cost = cost, .previous = arr };
+    }
+};
+const Vertex = struct { pos: Vec2, vel: Vec2 };
+
+fn getBestEnd(map: *const std.AutoArrayHashMap(Vertex, Edge), end: Vec2) struct { Vertex, usize } {
+    var bestEnd: ?Vertex = null;
+    var bestCost: ?usize = null;
+    for (map.keys()) |key| {
+        if (key.pos.eq(&end)) {
+            const edge = map.get(key).?;
+            if (bestEnd == null or bestCost.? > edge.cost) {
+                bestEnd = key;
+                bestCost = edge.cost;
+            }
+        }
+    }
+    return .{ bestEnd.?, bestCost.? };
+}
+
+fn updatePaths(map: *const std.AutoArrayHashMap(Vertex, Edge), paths: *std.AutoHashMap(Vec2, void), end: Vertex) !void {
+    var next = map.get(end).?;
+    try paths.put(end.pos, {});
+    std.debug.print("{any}: Count: {}\n", .{ end, next.previous.items.len });
+    while (next.previous.popOrNull()) |previous| {
+        try updatePaths(map, paths, previous);
+    }
+}
+
+fn drawMap(paths: *const std.AutoHashMap(Vec2, void)) void {
+    var pos: Vec2 = .{ .x = 0, .y = 0 };
+    for (data) |char| {
+        switch (char) {
+            '.' => {
+                if (paths.contains(pos)) {
+                    std.debug.print(".", .{});
+                } else {
+                    std.debug.print(" ", .{});
+                }
+            },
+            'E' => std.debug.print("E", .{}),
+            'S' => std.debug.print("S", .{}),
+            '#' => std.debug.print("█", .{}),
+            '\n' => {
+                pos.y += 1;
+                pos.x = -1;
+                std.debug.print("\n", .{});
+            },
+            else => {},
+        }
+        pos.x += 1;
+    }
+    std.debug.print("\n", .{});
 }
