@@ -70,14 +70,10 @@ fn estimate(unvisited: *std.AutoArrayHashMap(Vertex, Edge), visited: *std.AutoAr
 
     var estimated = unvisited.get(next);
     if (estimated == null or estimated.?.cost > cost) {
-        if(estimated != null)
-            std.debug.print("Replace! {any}\n", .{next});
         try unvisited.put(next, try Edge.init(cost, from, unvisited.allocator));
     } else if (estimated.?.cost == cost) {
         try estimated.?.previous.append(from);
         try unvisited.put(next, estimated.?);
-        std.debug.print("{any}: Count: {any}\n", .{ next, estimated.?.previous.items.len });
-        std.debug.print("\t{any}\n", .{estimated.?.previous.items});
     }
 }
 
@@ -176,7 +172,7 @@ fn drawMap(paths: *const std.AutoHashMap(Vec2, void)) void {
         switch (char) {
             '.' => {
                 if (paths.contains(pos)) {
-                    std.debug.print(".", .{});
+                    std.debug.print("#", .{});
                 } else {
                     std.debug.print(" ", .{});
                 }
